@@ -1,7 +1,7 @@
 import numpy as np
 from numpy.random import uniform
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
+from matplotlib.animation import FuncAnimation, PillowWriter
 from functools import partial
 
 def is_in_circle(x, y, r, center):
@@ -69,7 +69,7 @@ def simulate_pi(n_points=1000, s=1.0):
 
     return pi
 
-def animate_pi(s=1.0, thre=1e-4, n_max=1e6):
+def animate_pi(s=1.0, thre=1e-4, n_max=1e6, save_gif=False):
     """
     Watch the approximation converge to its familiar
     value in real time, given an accuracy threshold
@@ -118,7 +118,10 @@ def animate_pi(s=1.0, thre=1e-4, n_max=1e6):
             blit=True
             )
 
-    plt.show()
+    if save_gif:
+        ani.save('pi.gif')
+    else:
+        plt.show()
 
 def init_fig(fig, ax, scatter, text):
     """
@@ -191,7 +194,7 @@ if __name__=='__main__':
 
     # animate the simulation to watch 
     # our approximate pi converge to pi!
-    animate_pi(s=s, thre=1e-4)
+    animate_pi(s=s, thre=1e-4, save_gif=True)
     
     # # let's sample 100000 points
     # n_points = 100000

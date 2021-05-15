@@ -90,6 +90,8 @@ class Davidson:
 
     def is_converged(self, residual_norms, iteration):
         """Check for convergence and print iteration history"""
+        # we should check for convergence and then freeze
+        # converged eigenvectors
         print(f'Iteration {iteration} residual norms: ')
         for i in range(len(residual_norms)):
             print(f'  root {i}: {residual_norms[i]:>.8f}')

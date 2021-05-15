@@ -74,7 +74,7 @@ class Davidson:
             self,
             n_guess_per_root=2,
             r_threshold=1e-6,
-            max_iter=100,
+            max_iter=200,
             balanced=False,
             ):
 
@@ -84,13 +84,27 @@ class Davidson:
         self.balanced = balanced
         # self.vectors will be set when find_roots() is called
         self.vectors = None 
+        # store all eigenvalues for all trial vectors
+        # for use in the preconditioner
+        self.trial_eigvals = None
 
-    def subspace_preconditioner(self):
+    def precondition(self, A, r, eigval):
         # convergence can be accelerated by an appropriate
         # preconditioning scheme
-        # this is usually physically motivated, e.g.,
-        # the use of Koopman energies for a CIS Davidson
-        pass
+        # the standard preconditioner for implementations 
+        # of the Davidson procedure in EST codes uses
+        # (D - eigval*I)^-1 as a preconditioner to the 
+        # trial vector r, where D is the diagonal
+        # of the starting matrix A
+        # this is best used for diagonally dominant
+        # matrices -- won't work as well for rank sparse 
+        # but spatially dense matrices 
+        diag_A = np.diag(A)
+        diag_precond = 1 / (np.diag(A) - eigval)
+        precond = np.diag(diag_precond)
+        precond_r = np.dot(precond, r)
+
+        return precond_r
 
     def form_initial_subspace(self, dim, n_guess):
         """Form initial subspace from n_guess unit vectors"""
@@ -103,18 +117,20 @@ class Davidson:
 
         return V
     
-    def iterate(self, A, V, n_roots, verbose=False):
+    def iterate(self, A, V, n_roots, precondition=False, verbose=False):
         """Iterative routine for the Davidson solver"""
         if verbose:
             print('#=> Begin Davidson procedure')
 
         for i in range(self.max_iter):
-            # orthogonalize subspace
-            if self.balanced:
-                # not yet implemented
-                V = self.orthogonalize(V)
-            else:
-                V = self.orthonormalize(V)
+            # orthogonalize subspace except for the first 
+            # iteration
+            if i > 0:
+                if self.balanced:
+                    # not yet implemented
+                    V = self.orthogonalize(V)
+                else:
+                    V = self.orthonormalize(V)
 
             # project matrix A into the subspace spanned by V
             # note: this step is actually not done explicitly 
@@ -151,6 +167,11 @@ class Davidson:
                 # only expand the subsace for Davidson vectors
                 # that are not converged
                 if not dav_vec.converged:
+                    # precondition if requested
+                    # works well for diagonally dominant, spatially
+                    # sparse matrices (like in EST)
+                    if precondition:
+                        residual = self.precondition(A, residual, new_eigval)
                     V2 = np.column_stack((V2, residual))
 
             # overwrite V with the new expanded subspace
@@ -166,7 +187,7 @@ class Davidson:
                     print('#=> Davidson procedure converged.')
                 return 
     
-        raise Exception(f'Iteration limit of {self.max_iter} reached')
+        print(f'Warning: iteration limit of {self.max_iter} reached')
 
     @staticmethod
     def orthonormalize(V):
@@ -182,9 +203,13 @@ class Davidson:
         """Print iteration history"""
         print(f'Iteration {iteration} residual norms: ')
         for i, vec in enumerate(self.vectors):
-            print(f'  root {i}: {vec.residual_norm:>.8f}')
+            if vec.converged:
+                converged = 'Converged'
+            else:
+                converged = 'Not Converged'
+            print(f'  root {i}: {vec.residual_norm:>.8f} {converged}')
 
-    def find_roots(self, A, n_roots, verbose=False):
+    def find_roots(self, A, n_roots, precondition=False, verbose=False):
         """Main driver for the Davidson solver"""
         # instantiate Davidson vectors
         self.vectors = [ Vector() for _ in range(n_roots) ]
@@ -193,7 +218,10 @@ class Davidson:
         dim = np.shape(A)[0]
         n_guess = n_roots * self.n_guess_per_root
         V = self.form_initial_subspace(dim, n_guess)
-        self.iterate(A, V, n_roots, verbose=verbose)
+        self.iterate(A, V, n_roots, 
+                precondition=precondition, 
+                verbose=verbose
+                )
 
         # return converged eigenvectors and eigenvalues
         eigvals = [ v.eigenvalue for v in self.vectors ]
@@ -202,7 +230,7 @@ class Davidson:
         return eigvals, eigvecs
 
 
-def build_rank_sparse_matrix(dim, rank, seed=73):
+def rank_sparse_matrix(dim, rank, noise=1e-3, seed=73):
     """Build rank-sparse matrix for testing the Davidson routine"""
     # set random seed for reproducibility
     np.random.seed(seed)
@@ -224,20 +252,29 @@ def build_rank_sparse_matrix(dim, rank, seed=73):
     B = np.zeros((dim,dim))
     for i in range(rank):
         B += evals[i] * np.outer(q[:,i], q[:,i])
+    B += noise*np.random.randn(dim,dim)
     B = 0.5 * (B + B.T)
 
     return B
+
+def diagonally_dominant_matrix(dim, noise=1e-3, seed=73):
+
+    A = np.eye(dim)
+    A += np.random.randn(dim,dim)
+    A = 0.5 * (A + A.T)
+
+    return A
 
 
 if __name__=='__main__':
 
     import time
-    dim = 3000
-    rank = 10
-    n_roots = 3
+    dim = 1000
+    rank = 100
+    n_roots = 5
 
     start = time.time()
-    A = build_rank_sparse_matrix(dim, rank)
+    A = rank_sparse_matrix(dim, rank, noise=1e-1)
     end = time.time()
     print(f'Setup: {end-start:<.8f}s elapsed')
 
@@ -245,7 +282,12 @@ if __name__=='__main__':
     # using the Davidson procedure
     start = time.time()
     davidson = Davidson()
-    d, U = davidson.find_roots(A, n_roots, verbose=True)
+    d, U = davidson.find_roots(
+            A, 
+            n_roots, 
+            precondition=False, 
+            verbose=True
+            )
     print(d)
     end = time.time()
     print(f'Davidson: {end-start:<.8f}s elapsed')

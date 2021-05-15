@@ -209,7 +209,14 @@ class Davidson:
                 converged = 'Not Converged'
             print(f'  root {i}: {vec.residual_norm:>.8f} {converged}')
 
-    def find_roots(self, A, n_roots, precondition=False, verbose=False):
+    def find_roots(
+            self, 
+            A, 
+            n_roots, 
+            largest_roots=False,
+            precondition=False, 
+            verbose=False
+            ):
         """Main driver for the Davidson solver"""
         # instantiate Davidson vectors
         self.vectors = [ Vector() for _ in range(n_roots) ]
@@ -218,6 +225,11 @@ class Davidson:
         dim = np.shape(A)[0]
         n_guess = n_roots * self.n_guess_per_root
         V = self.form_initial_subspace(dim, n_guess)
+
+        # if we want the largest eigenvalues,
+        # find the smallest eigenvalues of the negative matrix
+        if largest_roots:
+            A = -A
         self.iterate(A, V, n_roots, 
                 precondition=precondition, 
                 verbose=verbose
@@ -226,6 +238,8 @@ class Davidson:
         # return converged eigenvectors and eigenvalues
         eigvals = [ v.eigenvalue for v in self.vectors ]
         eigvecs = [ v.vector for v in self.vectors ]
+        if largest_roots:
+            eigvals = [ -1 * ev for ev in eigvals ]
 
         return eigvals, eigvecs
 
@@ -274,7 +288,7 @@ if __name__=='__main__':
     n_roots = 5
 
     start = time.time()
-    A = rank_sparse_matrix(dim, rank, noise=1e-1)
+    A = rank_sparse_matrix(dim, rank)
     end = time.time()
     print(f'Setup: {end-start:<.8f}s elapsed')
 
@@ -285,6 +299,7 @@ if __name__=='__main__':
     d, U = davidson.find_roots(
             A, 
             n_roots, 
+            largest_roots=False,
             precondition=False, 
             verbose=True
             )
@@ -298,6 +313,8 @@ if __name__=='__main__':
     d2, U2 = np.linalg.eigh(A)
     idx = np.argsort(d2)
     print(d2[idx[:n_roots]])
+    d2 = d2[idx[::-1]]
+    print(d2[:n_roots])
     end = time.time()
     print(f'NumPy linalg: {end-start:<.8f}s elapsed')
     

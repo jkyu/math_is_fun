@@ -1,5 +1,65 @@
 import numpy as np
 
+class Vector:
+    """
+    Class object for each approximate eigenvector,
+    referenced herein as a Davidson vector.
+    Stores the Davidson vector, its residual, and
+    the Davidson eigenvalue. 
+    """
+    def __init__(
+            self,
+            vector=None,
+            residual=None,
+            eigenvalue=None,
+            converged=False,
+            ):
+
+        self.vector = vector
+        self.residual = residual
+        self.eigenvalue = eigenvalue
+        self.converged = converged
+
+    @staticmethod
+    def _l2_norm(vector):
+        """l_2 norm of provided"""
+        return np.linalg.norm(vector)
+
+    @property
+    def residual_norm(self):
+        """l_2 norm of the residual vector"""
+        return self._l2_norm(self.residual)
+
+    @property
+    def _has_vector(self):
+        """check if the vector and residual fields have been set"""
+        has_vector = isinstance(self.vector, np.ndarray)
+        has_residual = isinstance(self.vector, np.ndarray)
+        return has_vector and has_residual
+
+    def update(self, new_vector, new_residual, new_eigval, threshold):
+
+        # if self.vector and self.residual are not populated,
+        # set them here
+        # if self.vector is not yet or no longer converged,
+        # update the vector and residual here
+        # do nothing (freeze the vectors) if they remain converged
+        if not self._has_vector or not self.converged:
+            self.vector = new_vector
+            self.residual = new_residual
+            self.eigenvalue = new_eigval
+
+        # update the new vector if the vector
+        # is not converged
+        # this includes the case where the vector was
+        # converged in a previous iteration but falls
+        # out of convergence
+        if np.linalg.norm(new_residual) < threshold:
+            self.converged = True
+        else:
+            self.converged = False
+
+
 class Davidson:
     """
     Conventions for variable names:
@@ -18,10 +78,12 @@ class Davidson:
             balanced=False,
             ):
 
-       self.n_guess_per_root = n_guess_per_root
-       self.r_threshold = r_threshold # residual 2-norm
-       self.max_iter = max_iter
-       self.balanced = balanced
+        self.n_guess_per_root = n_guess_per_root
+        self.r_threshold = r_threshold # residual 2-norm
+        self.max_iter = max_iter
+        self.balanced = balanced
+        # self.vectors will be set when find_roots() is called
+        self.vectors = None 
 
     def subspace_preconditioner(self):
         # convergence can be accelerated by an appropriate
@@ -41,8 +103,11 @@ class Davidson:
 
         return V
     
-    def iterate(self, A, V, n_roots):
+    def iterate(self, A, V, n_roots, verbose=False):
         """Iterative routine for the Davidson solver"""
+        if verbose:
+            print('#=> Begin Davidson procedure')
+
         for i in range(self.max_iter):
             # orthogonalize subspace
             if self.balanced:
@@ -63,23 +128,48 @@ class Davidson:
             d = d[idx]
             U = U[:,idx]
             
-            # obtain the residual for each desired root
+            # make a copy of the subspace matrix V
+            # in order to expand it if necessary
+            # without changing V when treating multiple roots
             V2 = np.copy(V)
-            residual_norms = []
-            for j in range(n_roots):
-                sigma = np.dot(A, np.dot(V, U[:,j]))
-                r = sigma - (d[j] * np.dot(V, U[:,j]))
-                residual_norms.append(np.linalg.norm(r))
-                V2 = np.column_stack((V2, r))
 
+            # obtain the residual for each desired root
+            for j, dav_vec in enumerate(self.vectors):
+                new_eigval = d[j]
+                new_eigvec = U[:, j]
+
+                sigma = np.dot(A, np.dot(V, new_eigvec))
+                residual = sigma - (new_eigval * np.dot(V, new_eigvec))
+
+                dav_vec.update(
+                        new_eigvec, 
+                        residual, 
+                        new_eigval, 
+                        self.r_threshold
+                        )
+
+                # only expand the subsace for Davidson vectors
+                # that are not converged
+                if not dav_vec.converged:
+                    V2 = np.column_stack((V2, residual))
+
+            # overwrite V with the new expanded subspace
             V = V2
     
-            if self.is_converged(residual_norms[:n_roots], i):
-                return d[:n_roots], U[:,:n_roots]
-    
-        raise Exception('Davidson iteration limit reached')
+            # optional option to print iteration history
+            if verbose:
+                self.print_convergence(i)
 
-    def orthonormalize(self, V):
+            # return if all Davidson vectors are converged
+            if all([v.converged for v in self.vectors]):
+                if verbose:
+                    print('#=> Davidson procedure converged.')
+                return 
+    
+        raise Exception(f'Iteration limit of {self.max_iter} reached')
+
+    @staticmethod
+    def orthonormalize(V):
         """Orthonormalize subspace basis vectors using QR decomposition"""
         q, r = np.linalg.qr(V)
         return q
@@ -88,27 +178,28 @@ class Davidson:
         # Implement gram-schmidt without normalization
         pass
 
-    def is_converged(self, residual_norms, iteration):
-        """Check for convergence and print iteration history"""
-        # we should check for convergence and then freeze
-        # converged eigenvectors
+    def print_convergence(self, iteration):
+        """Print iteration history"""
         print(f'Iteration {iteration} residual norms: ')
-        for i in range(len(residual_norms)):
-            print(f'  root {i}: {residual_norms[i]:>.8f}')
+        for i, vec in enumerate(self.vectors):
+            print(f'  root {i}: {vec.residual_norm:>.8f}')
 
-        if max(residual_norms) < self.r_threshold:
-            return True
-        else:
-            return False
-
-    def find_roots(self, A, n_roots):
+    def find_roots(self, A, n_roots, verbose=False):
         """Main driver for the Davidson solver"""
+        # instantiate Davidson vectors
+        self.vectors = [ Vector() for _ in range(n_roots) ]
+
+        # set up and solve
         dim = np.shape(A)[0]
         n_guess = n_roots * self.n_guess_per_root
         V = self.form_initial_subspace(dim, n_guess)
-        evals, evecs = self.iterate(A, V, n_roots)
+        self.iterate(A, V, n_roots, verbose=verbose)
 
-        return evals, evecs
+        # return converged eigenvectors and eigenvalues
+        eigvals = [ v.eigenvalue for v in self.vectors ]
+        eigvecs = [ v.vector for v in self.vectors ]
+
+        return eigvals, eigvecs
 
 
 def build_rank_sparse_matrix(dim, rank, seed=73):
@@ -140,18 +231,21 @@ def build_rank_sparse_matrix(dim, rank, seed=73):
 
 if __name__=='__main__':
 
+    import time
     dim = 3000
     rank = 10
-    A = build_rank_sparse_matrix(dim, rank)
-    
     n_roots = 3
-    import time
+
+    start = time.time()
+    A = build_rank_sparse_matrix(dim, rank)
+    end = time.time()
+    print(f'Setup: {end-start:<.8f}s elapsed')
 
     # Find the lowest three evals and their evecs 
     # using the Davidson procedure
     start = time.time()
     davidson = Davidson()
-    d, U = davidson.find_roots(A, n_roots)
+    d, U = davidson.find_roots(A, n_roots, verbose=True)
     print(d)
     end = time.time()
     print(f'Davidson: {end-start:<.8f}s elapsed')

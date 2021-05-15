@@ -84,9 +84,6 @@ class Davidson:
         self.balanced = balanced
         # self.vectors will be set when find_roots() is called
         self.vectors = None 
-        # store all eigenvalues for all trial vectors
-        # for use in the preconditioner
-        self.trial_eigvals = None
 
     def precondition(self, A, r, eigval):
         # convergence can be accelerated by an appropriate

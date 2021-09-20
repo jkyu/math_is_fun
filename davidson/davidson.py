@@ -155,7 +155,7 @@ class Davidson:
                 residual = sigma - (new_eigval * np.dot(V, new_eigvec))
 
                 dav_vec.update(
-                        new_eigvec, 
+                        sigma / np.linalg.norm(sigma), 
                         residual, 
                         new_eigval, 
                         self.r_threshold
@@ -170,7 +170,6 @@ class Davidson:
                     if precondition:
                         residual = self.precondition(A, residual, new_eigval)
                     V2 = np.column_stack((V2, residual))
-
             # overwrite V with the new expanded subspace
             V = V2
     
@@ -282,7 +281,7 @@ if __name__=='__main__':
     import time
     dim = 1000
     rank = 100
-    n_roots = 5
+    n_roots = 10
 
     start = time.time()
     A = rank_sparse_matrix(dim, rank)
@@ -314,4 +313,4 @@ if __name__=='__main__':
     print(d2[:n_roots])
     end = time.time()
     print(f'NumPy linalg: {end-start:<.8f}s elapsed')
-    
+

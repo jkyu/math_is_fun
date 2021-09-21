@@ -257,7 +257,7 @@ def rank_sparse_matrix(dim, rank, noise=1e-3, seed=73):
 
     evals = np.random.randn(rank)
     evals.sort()
-    print('Reference evals: ', evals)
+    # print('Reference evals: ', evals)
 
     B = np.zeros((dim,dim))
     for i in range(rank):

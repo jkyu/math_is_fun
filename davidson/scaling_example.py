@@ -8,7 +8,14 @@ import numpy as np
 def davidson_scaling(rank=10, n_roots=3):
 
     davidson = Davidson()
-    for dim in [10, 100, 1000, 5000, 10000]:
+    dim_list = [10, 100, 500, 1000, 2000]
+    dim_list += [3000, 4000, 5000, 6000]
+    dim_list += [7000, 8000, 9000, 10000]
+    time_n = []
+    time_d = []
+    max_errors_eval = []
+    max_errors_evec = []
+    for dim in dim_list:
         print(f"> Dimension {dim}; rank {rank}")
         A = rank_sparse_matrix(dim, rank)
         start = time.time()
@@ -20,15 +27,21 @@ def davidson_scaling(rank=10, n_roots=3):
                 verbose=False
                 )
         end = time.time()
-        print(f"Davidson time: {end-start:>.4}s")
+        t_d = end-start
+        time_d.append(t_d)
+        print(f"Davidson time: {t_d:>.4}s")
 
         start = time.time()
         evals_n, evecs_n = np.linalg.eigh(A)
         evals_n = [evals_n[-i] for i in range(1,n_roots+1)]
         evecs_n = [evecs_n[:,-i] for i in range(1,n_roots+1)]
         end = time.time()
-        print(f"NumPy time: {end-start:>.4}s")
+        t_n = end-start
+        time_n.append(t_n)
+        print(f"NumPy time: {t_n:>.4}s")
 
+        errors_eval = []
+        errors_evec = []
         for i in range(n_roots):
             eval_error = np.abs(evals_d[i] - evals_n[i])
             # evec_error == 2 means there's a phase factor
@@ -38,11 +51,23 @@ def davidson_scaling(rank=10, n_roots=3):
             print(f"Root {i} error: ")
             print(f"  eval: {eval_error:>.4}")
             print(f"  evec: {evec_error:>.4}")
+            errors_eval.append(eval_error)
+            errors_evec.append(evec_error)
+        max_errors_eval.append(max(errors_eval))
+        max_errors_evec.append(max(errors_evec))
         print()
+    print("Dimension: ", dim_list)
+    print("Compute times (NumPy): ", time_n)
+    print("Compute times (Davidson): ", time_d)
+    print("Maximum eval errors: ", max_errors_eval)
+    print("Maximum evec errors: ", max_errors_evec)
 
 def kpca_scaling():
 
-    for npts in [10, 100, 1000, 5000, 10000]:
+    dim_list = [10, 100, 500, 1000, 2000]
+    dim_list += [3000, 4000, 5000, 6000]
+    dim_list += [7000, 8000, 9000, 10000]
+    for npts in dim_list:
         print(f"> Number of points: {npts}")
         data, _ = make_moons(n_samples=npts, random_state=0)
         run_kpca(data, use_davidson=False)
@@ -51,7 +76,7 @@ def kpca_scaling():
 
 
 if __name__=="__main__":
-    davidson_scaling()
+    # davidson_scaling()
     kpca_scaling()
 
 

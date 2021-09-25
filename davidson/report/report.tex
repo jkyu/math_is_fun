@@ -16,7 +16,8 @@
 
 %%% IMAGES %%%
 \usepackage{graphicx}
-\graphicspath{ {../img/} }
+\graphicspath{ {./} }
+\usepackage{hyperref}
 
 %%% SOURCE CODE %%%
 \usepackage{listings}
@@ -65,10 +66,10 @@
 \label{subsec:Summary}
 The Davidson method, also called ``Davidson-Liu'' or ``Block Davidson'' or some combination of those terms, is a subspace method for obtaining the smallest (or largest) eigenvalues and their associated eigenvectors for a given matrix.
 The need for such a method arises when it is unnecessary to solve the standard eigenvalue decomposition problem, which simultaneously yields all of the eigenvalues and eigenvectors. 
-For instance, one may be interested in only several eigenvectors (perhaps as part of principal component analysis?), and performing the full matrix decomposition may feel unnecessary. \newline
+For instance, one may be interested in only several eigenvectors (e.g., as part of principal component analysis), and performing the full matrix decomposition may feel unnecessary. \newline
 
 \noindent The Davidson method has become a ubiquitous part of electronic structure algorithms as the means by which the electronic Schr\"odinger equation is solved in order to obtain low-lying eigenstates of the system. 
-The full Hamiltonian matrix for even moderately-sized molecular systems can required hundreds of gigabytes (or more!) of storage, rendering direct eigendecomposition (or even explicit computation of the Hamiltonian itself) computationally intractable under most circumstances.
+The full Hamiltonian matrix for even moderately-sized molecular systems can require hundreds of gigabytes (or more!) of storage, rendering direct eigendecomposition (or even explicit computation of the Hamiltonian itself) computationally intractable under most circumstances.
 The Davidson method was in fact developed for this very purpose by Ernest Davidson in 1978 \cite{Davidson1983}.
 The following will be a brief dive into the theory behind the method. 
 
@@ -172,7 +173,73 @@ Once $r_i \approx 0$ according to some error metric ($l_2$ error being a simple 
 \end{algorithm}
 
 
+\subsection*{Accelerating computation of eigenvalues and eigenvectors}
+Although the Davidson algorithm was developed for application to Hamiltonian diagonalization by quantum chemists for configuration interaction problems, it can also accelerate eigenvalue/eigenvector computation in other matrix problems for which only a handful of eigenvectors must be obtained.
+An obvious example from data science is principal component analysis (PCA). 
+This is a method that takes data as input and determines vectors of maximum variance, reducing high dimensional data to several axes, the principal components, that attempt to summarize factors that determine variance in the data. 
+Often, only 1-3 vectors are chosen to represent these axes so as to be easily visualized. 
+The PCA can be interpreted as a rotation into the frame of the eigenvectors of a covariance matrix followed by a dimensionality reduction onto the subset of eigenvectors one wishes to retain. 
+Since only a small number of eigenvectors are desired, the Davidson can be used to obtain these without incurring the full cost of explicit diagonalization of the covariance matrix. 
+This is advantageous for extremely large data sets, as the eigenproblem is the computational bottleneck of a standard PCA.
+Davidson is by no means the only approach to doing so -- a variety of Krylov subspace methods, e.g., the Lanczos algorithm, may be used to achieve a similar result. 
 
+First, we examine the computational performance of the Davidson on routine eigensolves. \autoref{fig:dav-scaling} summarizes the computational scaling on rank-sparse (\textsf{rank==10}) but spatially dense matrices of varying sizes. 
+The Davidson demonstrates apparent linear scaling, which may save significant time for large matrices when compared to a full eigensolve performed by the naive application of NumPy's \textsf{linalg.eigh()} routine \cite{numpy}.
+Similarly, the maximum eigenvalue and eigenvector errors per Davidson solve are extremely low relative to traditional computation via NumPy, as can be observed by the y-axis scaled by $10^{-8}$ (\autoref{fig:dav-error}).  
+
+Next, we examine the acceleration afforded by implementation of the Davidson routine in a kernel PCA.
+The kernel PCA is used instead in cases for which the data of interest is not linearly separable \cite{Scholkopf1998}.
+The data is first mapped to a high dimensional space in which the data can now be linearly separated.
+This is called the kernel trick.
+The identity of the kernel is often swept under the rug, but a popular example is the Gaussian radial basis function, which is just a Gaussian that takes the Euclidean distance between two points as an argument. 
+The kernel returns a scalar value that implicit encodes information about the high dimensional space, allowing the construction of the ``kernel'' matrix, a proxy for the covariance matrix.
+Diagonalization of principal components that may allow for the linear separation of data that previously had no obvious separating hyperplane. 
+One complication of the kernel PCA is that good performance of the kernel depends on proper selection of parameters that may need to be specified for the kernel function.
+This necessitates parameter optimization as a part of data analysis with kernel methods.
+
+A summary of the results can be observed in \autoref{fig:kpca-scaling}. 
+The dataset is generated using the \textsf{make\_moons} function from scikit-learn \cite{scikit}, which generates data in two crescent shapes that cannot be cleanly separated by a linear hyperplane. 
+This is a popular example set for demonstrating the kernel trick. 
+The Davidson significantly reduces the time required to solve the eigenvalue problem; however, for kernel PCA, the bottleneck at systems of these sizes is in formation of the kernel matrix. 
+By employing the Davidson, the cost of the kernel PCA is almost entirely the cost of forming the kernel matrix. 
+
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{./figures/dav_scaling.pdf}
+\caption{
+Scaling of the Davidson versus NumPy's linalg.eigh routine for diagonalization of rank sparse (\textsf{rank==10}) but spatially dense matrices of a variety of dimensions.
+The Davidson algorithm yields apparent linear scaling for obtaining low-lying eigenvectors, avoiding the full $O(N^3)$ computational cost of full diagonalization. 
+}
+\label{fig:dav-scaling}
+\end{figure}
+
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{./figures/dav_error.pdf}
+\caption{
+Maximum $l_2$ error among all eigenvectors and maximum absolute error among all eigenvalues obtained using the Davidson method. 
+These errors are almost negligible, with the maximum error computed to be on the order of $10^{-8}$. 
+}
+\label{fig:dav-error}
+\end{figure}
+
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{./figures/kpca_scaling.pdf}
+\caption{
+Scaling of the Davidson versus NumPy's linalg.eigh routine for kernel PCA. 
+Implementation of the Davidson reduces the computational expense of the eigensolve portion of a kernel PCA.
+Unfortunately, the formation of the kernel matrix is the bottleneck here.
+}
+\label{fig:kpca-scaling}
+\end{figure}
+
+
+
+\newpage
 \bibliographystyle{plain}
 \bibliography{references}
 

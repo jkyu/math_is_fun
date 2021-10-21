@@ -34,7 +34,7 @@ class Vector:
     def _has_vector(self):
         """check if the vector and residual fields have been set"""
         has_vector = isinstance(self.vector, np.ndarray)
-        has_residual = isinstance(self.vector, np.ndarray)
+        has_residual = isinstance(self.residual, np.ndarray)
         return has_vector and has_residual
 
     def update(self, new_vector, new_residual, new_eigval, threshold):
@@ -54,18 +54,15 @@ class Vector:
         # this includes the case where the vector was
         # converged in a previous iteration but falls
         # out of convergence
-        if np.linalg.norm(new_residual) < threshold:
-            self.converged = True
-        else:
-            self.converged = False
+        self.converged = np.linalg.norm(new_residual) < threshold
 
 
 class Davidson:
     """
-    Conventions for variable names:
+    Conventions for variable names as corresponding to report document:
         - A is the matrix of interest for which we would like
           to find low-lying eigenvectors/eigenvalues
-        - V is the subspace to which we project A to solve
+        - V is the subspace to which we project matrix to solve
           for its eigenvectors/eigenvalues
         - d is a list of all eigenvalues in the context its used
         - U is a unitary matrix whose columns are eigenvectors
@@ -73,48 +70,49 @@ class Davidson:
     def __init__(
             self,
             n_guess_per_root=2,
-            r_threshold=1e-6,
+            res_threshold=1e-6,
             max_iter=200,
             balanced=False,
             ):
 
         self.n_guess_per_root = n_guess_per_root
-        self.r_threshold = r_threshold # residual 2-norm
+        self.res_threshold = res_threshold # residual 2-norm
         self.max_iter = max_iter
         self.balanced = balanced
         # self.vectors will be set when find_roots() is called
         self.vectors = None 
 
-    def precondition(self, A, r, eigval):
+    def precondition(self, matrix, residual, eigval):
         # convergence can be accelerated by an appropriate
         # preconditioning scheme
         # the standard preconditioner for implementations 
         # of the Davidson procedure in EST codes uses
         # (D - eigval*I)^-1 as a preconditioner to the 
         # trial vector r, where D is the diagonal
-        # of the starting matrix A
+        # of the starting matrix matrix
         # this is best used for diagonally dominant
         # matrices -- won't work as well for rank sparse 
         # but spatially dense matrices 
-        diag_A = np.diag(A)
-        diag_precond = 1 / (np.diag(A) - eigval)
+        diag = np.diag(matrix)
+        diag_precond = 1 / (np.diag(matrix) - eigval)
         precond = np.diag(diag_precond)
-        precond_r = np.dot(precond, r)
+        precond_residual = np.dot(precond, residual)
 
-        return precond_r
+        return precond_residual
 
     def form_initial_subspace(self, dim, n_guess):
         """Form initial subspace from n_guess unit vectors"""
         # this is a prior that assumes diagonally dominant
         # structure for the matrix of interest
         # easy but not always the right or best choice
-        V = np.zeros((dim, n_guess))
+        # submat stands for subspace matrix
+        submat = np.zeros((dim, n_guess))
         for i in range(n_guess):
-            V[i,i] += 1
+            submat[i,i] += 1
 
-        return V
+        return submat
     
-    def iterate(self, A, V, n_roots, precondition=False, verbose=False):
+    def iterate(self, matrix, submat, n_roots, precondition=False, verbose=False):
         """Iterative routine for the Davidson solver"""
         if verbose:
             print('#=> Begin Davidson procedure')
@@ -125,40 +123,42 @@ class Davidson:
             if i > 0:
                 if self.balanced:
                     # not yet implemented
-                    V = self.orthogonalize(V)
+                    submat = self.orthogonalize(submat)
                 else:
-                    V = self.orthonormalize(V)
+                    submat = self.orthonormalize(submat)
 
             # project matrix A into the subspace spanned by V
             # note: this step is actually not done explicitly 
             # in real codes, where the matrix-vector product
             # sigma = AVu is formed directly in the subspace
-            B = np.dot(np.dot(V.T, A), V)
+            projmat = np.dot(np.dot(submat.T, matrix), submat)
             
             # solve the subspace eigenvalue problem
-            d, U = np.linalg.eigh(B)
-            idx = d.argsort()
-            d = d[idx]
+            # conventional notation for eigenvalue problems:
+            # U = unitary matrix
+            diag, U = np.linalg.eigh(projmat)
+            idx = diag.argsort()
+            diag = diag[idx]
             U = U[:,idx]
             
-            # make a copy of the subspace matrix V
+            # make a copy of the subspace matrix 
             # in order to expand it if necessary
-            # without changing V when treating multiple roots
-            V2 = np.copy(V)
+            # without changing it when treating multiple roots
+            submat_expanded = np.copy(submat)
 
             # obtain the residual for each desired root
             for j, dav_vec in enumerate(self.vectors):
-                new_eigval = d[j]
+                new_eigval = diag[j]
                 new_eigvec = U[:, j]
 
-                sigma = np.dot(A, np.dot(V, new_eigvec))
-                residual = sigma - (new_eigval * np.dot(V, new_eigvec))
+                sigma = np.dot(matrix, np.dot(submat, new_eigvec))
+                residual = sigma - (new_eigval * np.dot(submat, new_eigvec))
 
                 dav_vec.update(
                         sigma / np.linalg.norm(sigma), 
                         residual, 
                         new_eigval, 
-                        self.r_threshold
+                        self.res_threshold
                         )
 
                 # only expand the subsace for Davidson vectors
@@ -168,10 +168,10 @@ class Davidson:
                     # works well for diagonally dominant, spatially
                     # sparse matrices (like in EST)
                     if precondition:
-                        residual = self.precondition(A, residual, new_eigval)
-                    V2 = np.column_stack((V2, residual))
-            # overwrite V with the new expanded subspace
-            V = V2
+                        residual = self.precondition(matrix, residual, new_eigval)
+                    submat_expanded = np.column_stack((submat_expanded, residual))
+            # overwrite submat with the new expanded subspace
+            submat = submat_expanded
     
             # optional option to print iteration history
             if verbose:
@@ -185,13 +185,12 @@ class Davidson:
     
         print(f'Warning: iteration limit of {self.max_iter} reached')
 
-    @staticmethod
-    def orthonormalize(V):
+    def orthonormalize(self, submat):
         """Orthonormalize subspace basis vectors using QR decomposition"""
-        q, r = np.linalg.qr(V)
+        q, r = np.linalg.qr(submat)
         return q
 
-    def orthogonalize(self, V):
+    def orthogonalize(self, submat):
         # Implement gram-schmidt without normalization
         pass
 
@@ -207,7 +206,7 @@ class Davidson:
 
     def find_roots(
             self, 
-            A, 
+            matrix, 
             n_roots, 
             largest_roots=False,
             precondition=False, 
@@ -218,24 +217,23 @@ class Davidson:
         self.vectors = [ Vector() for _ in range(n_roots) ]
 
         # set up and solve
-        dim = np.shape(A)[0]
+        dim = np.shape(matrix)[0]
         n_guess = n_roots * self.n_guess_per_root
-        V = self.form_initial_subspace(dim, n_guess)
+        submat = self.form_initial_subspace(dim, n_guess)
 
         # if we want the largest eigenvalues,
         # find the smallest eigenvalues of the negative matrix
         if largest_roots:
-            A = -A
-        self.iterate(A, V, n_roots, 
+            matrix = -matrix
+        self.iterate(matrix, submat, n_roots, 
                 precondition=precondition, 
                 verbose=verbose
                 )
 
         # return converged eigenvectors and eigenvalues
         eigvals = [ v.eigenvalue for v in self.vectors ]
-        eigvecs = [ v.vector for v in self.vectors ]
-        if largest_roots:
-            eigvals = [ -1 * ev for ev in eigvals ]
+        scaler = -1 if largest_roots else 1
+        eigvecs = [ scaler * v.vector for v in self.vectors ]
 
         return eigvals, eigvecs
 
@@ -246,10 +244,10 @@ def rank_sparse_matrix(dim, rank, noise=1e-3, seed=73):
     np.random.seed(seed)
 
     # get orthonormal basis via QR
-    A = np.zeros((dim,dim))
+    matrix = np.zeros((dim,dim))
     for i in range(dim):
-        A[:,i] = np.random.randn(dim)
-    q, r = np.linalg.qr(A)
+        matrix[:,i] = np.random.randn(dim)
+    q, r = np.linalg.qr(matrix)
 
     # construct a hermitian matrix of some rank
     # will be rank sparse if rank << dim
@@ -259,21 +257,21 @@ def rank_sparse_matrix(dim, rank, noise=1e-3, seed=73):
     evals.sort()
     # print('Reference evals: ', evals)
 
-    B = np.zeros((dim,dim))
+    sparsemat = np.zeros((dim,dim))
     for i in range(rank):
-        B += evals[i] * np.outer(q[:,i], q[:,i])
-    B += noise*np.random.randn(dim,dim)
-    B = 0.5 * (B + B.T)
+        sparsemat += evals[i] * np.outer(q[:,i], q[:,i])
+    sparsemat += noise*np.random.randn(dim,dim)
+    sparsemat = 0.5 * (sparsemat + sparsemat.T)
 
-    return B
+    return sparsemat
 
 def diagonally_dominant_matrix(dim, noise=1e-3, seed=73):
 
-    A = np.eye(dim)
-    A += np.random.randn(dim,dim)
-    A = 0.5 * (A + A.T)
+    matrix = np.eye(dim)
+    matrix += np.random.randn(dim,dim)
+    matrix = 0.5 * (matrix + matrix.T)
 
-    return A
+    return matrix
 
 
 if __name__=='__main__':
@@ -284,7 +282,7 @@ if __name__=='__main__':
     n_roots = 10
 
     start = time.time()
-    A = rank_sparse_matrix(dim, rank)
+    matrix = rank_sparse_matrix(dim, rank)
     end = time.time()
     print(f'Setup: {end-start:<.8f}s elapsed')
 
@@ -293,7 +291,7 @@ if __name__=='__main__':
     start = time.time()
     davidson = Davidson()
     d, U = davidson.find_roots(
-            A, 
+            matrix, 
             n_roots, 
             largest_roots=False,
             precondition=False, 
@@ -306,7 +304,7 @@ if __name__=='__main__':
     # Find all eval/evecs simultaneously by
     # explicit diagonalization
     start = time.time()
-    d2, U2 = np.linalg.eigh(A)
+    d2, U2 = np.linalg.eigh(matrix)
     idx = np.argsort(d2)
     print(d2[idx[:n_roots]])
     d2 = d2[idx[::-1]]
